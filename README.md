@@ -9,11 +9,11 @@ A Python GUI application to evaluate translation quality against Google Translat
 - Shows reference Google translation
 
 ## Running
-1. Install the requirements
-2. Run the translation_evaluator.py file
-3. The GUI will appear where you can input texts and evaluate translations
-
 1. Clone the repository:
 ```bash
 git clone https://github.com/yourusername/translation-evaluator.git
 cd translation-evaluator
+```
+2. Install the requirements
+3. Run the translation_evaluator.py file
+4. The GUI will appear where you can input texts and evaluate translations
