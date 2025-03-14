@@ -2,76 +2,58 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import ssl
 import certifi
-from googletrans import Translator, LANGUAGES
-
+from googletrans import Translator
 from sacrebleu import sentence_bleu
-import nltk
 from sacrebleu.tokenizers.tokenizer_13a import Tokenizer13a
+from collections import Counter
 
-# SSL certificate
+# Fix SSL certificate issue
 ssl._create_default_https_context = lambda: ssl.create_default_context(cafile=certifi.where())
-
-# Download NLTK punctuation rules with proper SSL context
-try:
-    nltk.data.find('tokenizers/punkt')
-except LookupError:
-    nltk.download('punkt', quiet=True)
 
 
 class TranslationEvaluator:
     def __init__(self, root):
         self.root = root
         self.root.title("Translation Quality Evaluator")
-        self.root.geometry("800x300")
+        self.root.geometry("1000x700")
 
         self.translator = Translator()
         self.languages = {'French': 'fr', 'German': 'de', 'Spanish': 'es'}
+        self.tokenizer = Tokenizer13a()
 
         self.create_widgets()
 
     def create_widgets(self):
-        # Source Text
-        ttk.Label(self.root, text="English Source Text (max 2000 chars):").grid(row=0, column=0, padx=10, pady=5,
-                                                                                sticky='w')
-        self.source_text = tk.Text(self.root, height=8, width=60, wrap=tk.WORD)
-        self.source_text.grid(row=1, column=0, padx=10, pady=5)
+        """Create and arrange the UI components."""
+        # Source text input
+        tk.Label(self.root, text="Source Text (English):").pack(pady=(10, 0))
+        self.source_text = tk.Text(self.root, height=10, width=80)
+        self.source_text.pack(pady=(0, 10))
 
-        # Translation Input
-        ttk.Label(self.root, text="Your Translation (max 2000 chars):").grid(row=0, column=1, padx=10, pady=5,
-                                                                             sticky='w')
-        self.user_translation = tk.Text(self.root, height=8, width=60, wrap=tk.WORD)
-        self.user_translation.grid(row=1, column=1, padx=10, pady=5)
+        # Language selection
+        tk.Label(self.root, text="Target Language:").pack()
+        self.language_var = tk.StringVar(value="French")
+        language_menu = ttk.Combobox(self.root, textvariable=self.language_var, values=list(self.languages.keys()))
+        language_menu.pack(pady=(0, 10))
 
-        # Language Selection
-        ttk.Label(self.root, text="Target Language:").grid(row=2, column=0, padx=10, pady=5, sticky='w')
-        self.language_var = tk.StringVar()
-        self.lang_combo = ttk.Combobox(self.root, textvariable=self.language_var,
-                                       values=list(self.languages.keys()), state='readonly')
-        self.lang_combo.grid(row=2, column=0, padx=10, pady=5, sticky='e')
-        self.lang_combo.current(0)
+        # User translation input
+        tk.Label(self.root, text="Your Translation:").pack()
+        self.user_translation = tk.Text(self.root, height=10, width=80)
+        self.user_translation.pack(pady=(0, 10))
 
-        # Evaluate Button
-        self.eval_btn = ttk.Button(self.root, text="Evaluate Translation", command=self.evaluate_translation)
-        self.eval_btn.grid(row=2, column=1, padx=10, pady=5, sticky='w')
+        # Evaluate button
+        self.evaluate_button = tk.Button(self.root, text="Evaluate Translation", command=self.evaluate_translation)
+        self.evaluate_button.pack(pady=(10, 20))
 
-        # Results Display
-        self.result_label = ttk.Label(self.root, text="", font=('Helvetica', 12))
-        self.result_label.grid(row=3, column=0, columnspan=2, padx=10, pady=20)
+        # Result display
+        self.result_label = tk.Label(self.root, text="", font=("Arial", 14))
+        self.result_label.pack(pady=(10, 5))
 
-    def populate_score_explanation(self):
-        explanation = """Score Guide:
-- < 10: Almost useless (red)
-- 10 - 19: Hard to get the gist (orange)
-- 20 - 29: Gist clear but significant errors (yellow)
-- 30 - 40: Understandable to good (light green)
-- 40 - 50: Quality translation (green)
-- 50 - 60: High quality and fluent (dark green)
-- > 60: Highest quality (blue)"""
-
-        self.score_explanation.config(state='normal')
-        self.score_explanation.delete(1.0, tk.END)
-        self.score_explanation.insert(tk.END, explanation)
-        self.score_explanation.config(state='disabled')
+        # Google translation display
+        self.google_translation_label = tk.Label(self.root, text="Google Translation:", font=("Arial", 12))
+        self.google_translation_label.pack(pady=(5, 0))
+        self.google_translation_text = tk.Text(self.root, height=6, width=80, state="disabled")
+        self.google_translation_text.pack(pady=(0, 10))
 
     def evaluate_translation(self):
         source_text = self.source_text.get("1.0", tk.END).strip()
@@ -79,21 +61,64 @@ class TranslationEvaluator:
         target_lang = self.languages[self.language_var.get()]
 
         try:
-            # Get translations
+            # Get Google Translate version
             google_trans = self.translator.translate(source_text, dest=target_lang).text
 
-            # Tokenize with SacreBLEU's tokenizer
-            tokenizer = Tokenizer13a()
-            google_processed = tokenizer(google_trans)
-            user_processed = tokenizer(user_trans)
+            # Tokenize and normalize
+            google_processed = self.tokenizer(google_trans)
+            user_processed = self.tokenizer(user_trans)
 
-            # Calculate BLEU
-            score = round(sentence_bleu(user_processed, [google_processed]).score, 1)
+            # Split into tokens for ROUGE calculation
+            google_tokens = google_processed.split()
+            user_tokens = user_processed.split()
 
-            self.display_results(score, google_trans)
+            # Calculate scores
+            bleu_score = round(sentence_bleu(user_processed, [google_processed]).score, 1)
+            rouge_score = self.compute_rouge(google_tokens, user_tokens)
+            combined_score = self.calculate_combined_score(bleu_score, rouge_score)
+
+            # Display results with new combined score
+            self.display_results(bleu_score, rouge_score, combined_score, google_trans)
 
         except Exception as e:
             messagebox.showerror("Error", f"Evaluation failed: {str(e)}")
+
+    def compute_rouge(self, ref_tokens, cand_tokens, n=1):
+        """Calculate ROUGE-N F1 score between 0-100"""
+        if not ref_tokens or not cand_tokens:
+            return 0.0
+
+        # Create n-gram counters
+        ref_counts = Counter(zip(*[ref_tokens[i:] for i in range(n)])) if n > 1 else Counter(ref_tokens)
+        cand_counts = Counter(zip(*[cand_tokens[i:] for i in range(n)])) if n > 1 else Counter(cand_tokens)
+
+        # Calculate overlap
+        overlap = sum((cand_counts & ref_counts).values())
+
+        # Calculate precision and recall
+        precision = overlap / len(cand_tokens) if len(cand_tokens) > 0 else 0.0
+        recall = overlap / len(ref_tokens) if len(ref_tokens) > 0 else 0.0
+
+        # Calculate F1 score
+        if (precision + recall) == 0:
+            return 0.0
+        return round(2 * (precision * recall) / (precision + recall) * 100, 1)
+
+    def calculate_combined_score(self, bleu, rouge):
+        """Calculate harmonic mean of BLEU and ROUGE scores"""
+        if (bleu + rouge) == 0:
+            return 0.0
+        return round(2 * (bleu * rouge) / (bleu + rouge), 1)
+
+    def display_results(self, bleu, rouge, combined, google_trans):
+        category, color = self.get_score_category(combined)
+        result_text = (
+            f"BLEU: {bleu}/100 | ROUGE-1: {rouge}/100\n"
+            f"Combined Score: {combined}/100 - {category}"
+        )
+
+        self.result_label.config(text=result_text, foreground=color)
+        self.show_google_translation(google_trans)
 
     def get_score_category(self, score):
         if score < 10:
@@ -101,36 +126,22 @@ class TranslationEvaluator:
         elif 10 <= score < 20:
             return ('Hard to get the gist', 'orange')
         elif 20 <= score < 30:
-            return ('The gist is clear, but has significant grammatical errors', 'yellow')
+            return ('Gist clear but significant errors', 'yellow')
         elif 30 <= score < 40:
-            return ('Understandable to good translations', 'light green')
+            return ('Understandable to good', 'light green')
         elif 40 <= score < 50:
             return ('Quality translation', 'green')
         elif 50 <= score < 60:
-            return ('High quality, adequate, and fluent translation', 'dark green')
+            return ('High quality and fluent', 'dark green')
         else:
             return ('Highest quality', 'blue')
 
-    def display_results(self, score, google_trans):
-        category, color = self.get_score_category(score)
-        result_text = f"Score: {score}/100 - {category}"
-
-        self.result_label.config(text=result_text, foreground=color)
-
-        # Show Google translation in a new window
-        self.show_google_translation(google_trans)
-
-    def show_google_translation(self, text):
-        top = tk.Toplevel(self.root)
-        top.title("Google Translation Reference")
-
-        text_area = tk.Text(top, wrap=tk.WORD, width=80, height=15)
-        text_area.insert(tk.END, text)
-        text_area.config(state='disabled')
-        text_area.pack(padx=10, pady=10)
-
-        close_btn = ttk.Button(top, text="Close", command=top.destroy)
-        close_btn.pack(pady=5)
+    def show_google_translation(self, translation):
+        """Display Google's translation in the text box."""
+        self.google_translation_text.config(state="normal")
+        self.google_translation_text.delete("1.0", tk.END)
+        self.google_translation_text.insert(tk.END, translation)
+        self.google_translation_text.config(state="disabled")
 
 
 if __name__ == "__main__":
